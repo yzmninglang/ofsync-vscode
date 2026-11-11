@@ -15,12 +15,20 @@ interface SyncCodeResult {
   [key: string]: unknown;
 }
 
+interface SyncCodeResponse {
+  pdf?: SyncCodeResult[];
+}
+
 interface SyncPdfResult {
   file?: string;
   line?: number;
   column?: number;
   path?: string;
   [key: string]: unknown;
+}
+
+interface SyncPdfResponse {
+  code?: SyncPdfResult[];
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -120,8 +128,8 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
 
     await this.runOperation('Looking up PDF location…', async () => {
       const selection = editor.selection.active;
-      const result = await this.client().syncCode(relativePath, selection.line + 1, selection.character + 1, buildId) as SyncCodeResult;
-      this.openPdfPreview(false, result);
+      const response = await this.client().syncCode(relativePath, selection.line + 1, selection.character + 1, buildId) as SyncCodeResult | SyncCodeResponse;
+      this.openPdfPreview(false, pdfLocationFrom(response));
       void vscode.window.showInformationMessage('Opened the compiled PDF for the current source location.');
     });
   }
@@ -146,8 +154,8 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     }
 
     await this.runOperation('Looking up source location…', async () => {
-      const result = await this.client().syncPdf(Number(page), Number(horizontal), Number(vertical), buildId) as SyncPdfResult;
-      await this.revealSource(result);
+      const response = await this.client().syncPdf(Number(page), Number(horizontal), Number(vertical), buildId) as SyncPdfResult | SyncPdfResponse;
+      await this.revealSource(sourceLocationFrom(response));
     });
   }
 
@@ -160,9 +168,9 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     );
     this.panel = panel;
     panel.onDidDispose(() => { this.panel = undefined; }, undefined, this.context.subscriptions);
-    panel.webview.onDidReceiveMessage((message: { type?: string; page?: number; h?: number; v?: number }) => {
+    panel.webview.onDidReceiveMessage((message: { type?: string; page?: number; h?: number; v?: number; identifier?: string }) => {
       if (message.type === 'openSource' && message.page !== undefined && message.h !== undefined && message.v !== undefined) {
-        void this.openSourceFromCoordinates(message.page, message.h, message.v);
+        void this.openSourceFromCoordinates(message.page, message.h, message.v, message.identifier);
       }
       if (message.type === 'previewReady' || message.type === 'reloadPdf') {
         void this.loadPdf(panel);
@@ -231,15 +239,15 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     }
   }
 
-  private async openSourceFromCoordinates(page: number, h: number, v: number): Promise<void> {
+  private async openSourceFromCoordinates(page: number, h: number, v: number, identifier?: string): Promise<void> {
     const buildId = this.buildId();
     if (!buildId) {
       void vscode.window.showWarningMessage('Set “Ofsync: Build Id” before opening a source location.');
       return;
     }
     await this.runOperation('Looking up source location…', async () => {
-      const result = await this.client().syncPdf(page, h, v, buildId) as SyncPdfResult;
-      await this.revealSource(result);
+      const response = await this.client().syncPdf(page, h, v, buildId) as SyncPdfResult | SyncPdfResponse;
+      await this.revealSource(sourceLocationFrom(response), identifier);
     });
   }
 
@@ -253,7 +261,7 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     }
   }
 
-  private async revealSource(result: SyncPdfResult): Promise<void> {
+  private async revealSource(result: SyncPdfResult, identifier?: string): Promise<void> {
     const reportedPath = result.file ?? result.path;
     const line = numberValue(result.line) ?? 1;
     const column = numberValue(result.column) ?? 1;
@@ -267,9 +275,12 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     }
     const document = await vscode.workspace.openTextDocument(vscode.Uri.file(candidate));
     const position = new vscode.Position(Math.max(0, line - 1), Math.max(0, column - 1));
-    const editor = await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, preview: false });
-    editor.selection = new vscode.Selection(position, position);
-    editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+    const visibleEditor = vscode.window.visibleTextEditors.find((editor) => editor.document.uri.fsPath === document.uri.fsPath);
+    const viewColumn = visibleEditor?.viewColumn ?? vscode.window.visibleTextEditors.at(-1)?.viewColumn ?? vscode.ViewColumn.One;
+    const editor = await vscode.window.showTextDocument(document, { viewColumn, preview: false, preserveFocus: false });
+    const selection = selectionForSourceLocation(document, position, identifier);
+    editor.selection = selection;
+    editor.revealRange(selection, vscode.TextEditorRevealType.InCenter);
   }
 
   private client(): OfsyncClient {
@@ -353,6 +364,44 @@ function finiteNumber(value: string): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function pdfLocationFrom(response: SyncCodeResult | SyncCodeResponse): SyncCodeResult {
+  if ('pdf' in response && Array.isArray(response.pdf)) {
+    const location = response.pdf.find(isRecord);
+    if (!location) {
+      throw new Error('The daemon returned no PDF location for this source position.');
+    }
+    return location as SyncCodeResult;
+  }
+  return response as SyncCodeResult;
+}
+
+function sourceLocationFrom(response: SyncPdfResult | SyncPdfResponse): SyncPdfResult {
+  if ('code' in response && Array.isArray(response.code)) {
+    const location = response.code.find(isRecord);
+    if (!location) {
+      throw new Error('The daemon returned no source location for this PDF position.');
+    }
+    return location as SyncPdfResult;
+  }
+  return response as SyncPdfResult;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function selectionForSourceLocation(document: vscode.TextDocument, position: vscode.Position, identifier?: string): vscode.Selection {
+  const line = document.lineAt(Math.min(position.line, document.lineCount - 1));
+  const text = identifier?.trim();
+  if (text) {
+    const index = line.text.indexOf(text);
+    if (index >= 0) {
+      return new vscode.Selection(new vscode.Position(line.lineNumber, index), new vscode.Position(line.lineNumber, index + text.length));
+    }
+  }
+  return new vscode.Selection(position, position);
 }
 
 function isChildPath(root: string, candidate: string): boolean {
