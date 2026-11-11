@@ -434,8 +434,8 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
   }
 
   private findProjectMapping(mappings: ProjectMapping[]): ProjectMapping | undefined {
-    const root = path.resolve(this.projectRoot());
-    return mappings.find((mapping) => mapping.directory && path.resolve(mapping.directory) === root);
+    const root = comparablePath(this.projectRoot());
+    return mappings.find((mapping) => mapping.directory && comparablePath(mapping.directory) === root);
   }
 
   private serverUrl(): string {
@@ -584,6 +584,16 @@ function isSyncTexMiss(error: unknown): boolean {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+/**
+ * VS Code reports Windows drive letters in lower case (`c:\...`) while the
+ * manager stores whatever the directory browser produced (`C:\...`). Windows
+ * paths are case-insensitive, so normalize before comparing them.
+ */
+function comparablePath(value: string): string {
+  const resolved = path.resolve(value);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
 function isChildPath(root: string, candidate: string): boolean {
