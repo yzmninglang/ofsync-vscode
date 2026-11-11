@@ -20,10 +20,6 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
   const targetV = finiteNumber(location?.v) ?? finiteNumber(location?.y);
   const targetWidth = finiteNumber(location?.width);
   const targetHeight = finiteNumber(location?.height);
-  const hint = location?.page
-    ? 'Jumped from source. Double-click PDF text to return to LaTeX.'
-    : 'Double-click PDF text to open its corresponding LaTeX source.';
-
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -31,15 +27,14 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; worker-src ${webview.cspSource};">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
-    body{margin:0;color:var(--vscode-foreground);background:var(--vscode-editor-background);font-family:var(--vscode-font-family);height:100vh;display:grid;grid-template-rows:auto 1fr}
-    .toolbar{padding:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--vscode-panel-border)}
+    body{margin:0;color:var(--vscode-foreground);background:var(--vscode-editor-background);font-family:var(--vscode-font-family);height:100vh;display:block}
     button{border:0;padding:6px 8px;color:var(--vscode-button-foreground);background:var(--vscode-button-background);cursor:pointer}
     button:hover{background:var(--vscode-button-hoverBackground)}
     .hint{color:var(--vscode-descriptionForeground);font-size:12px}
-    #viewer{overflow:auto;padding:22px;background:var(--vscode-editor-background);position:relative;overscroll-behavior:contain}
+    #viewer{height:100vh;box-sizing:border-box;overflow:auto;padding:10px;background:var(--vscode-editor-background);position:relative;overscroll-behavior:contain}
     .staging{position:absolute;left:0;top:0;width:100%;visibility:hidden;pointer-events:none}
     .pdf-document{width:max-content;min-width:100%;transform-origin:0 0}
-    .page{position:relative;margin:0 auto 20px;width:max-content;box-shadow:0 1px 8px #0008;background:#fff;line-height:0;cursor:crosshair}
+    .page{position:relative;margin:0 auto 10px;width:max-content;box-shadow:0 1px 8px #0008;background:#fff;line-height:0;cursor:crosshair}
     canvas{display:block}
     .text-layer{position:absolute;inset:0;overflow:hidden;line-height:1;text-size-adjust:none;transform-origin:0 0}
     .text-item{position:absolute;display:block;white-space:pre;transform-origin:0 0;color:transparent;cursor:text;line-height:1}
@@ -51,7 +46,6 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
   </style>
 </head>
 <body>
-  <div class="toolbar"><button id="reload">Reload PDF</button><span class="hint">${hint}</span></div>
   <main id="viewer"><div id="message">Loading compiled PDF…</div></main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
@@ -113,11 +107,6 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
       }
     }, { passive: false });
     viewer.addEventListener('scroll', rememberViewState, { passive: true });
-
-    document.getElementById('reload').addEventListener('click', () => {
-      message.textContent = 'Loading the new compiled PDF…';
-      vscode.postMessage({ type: 'reloadPdf' });
-    });
 
     function setTarget(nextTarget) {
       target = { page: nextTarget.page || 1, h: nextTarget.h, v: nextTarget.v, width: nextTarget.width, height: nextTarget.height, sourceText: nextTarget.sourceText || '' };
