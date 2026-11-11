@@ -11,6 +11,9 @@ interface SyncCodeResult {
   v?: number;
   x?: number;
   y?: number;
+  width?: number;
+  height?: number;
+  sourceText?: string;
   buildId?: string;
   [key: string]: unknown;
 }
@@ -129,8 +132,8 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
 
     await this.runOperation('Looking up PDF location…', async () => {
       const selection = editor.selection.active;
-      const response = await this.client().syncCode(relativePath, selection.line + 1, selection.character + 1, buildId) as SyncCodeResult | SyncCodeResponse;
-      this.openPdfPreview(false, pdfLocationFrom(response));
+      const response = await this.client().syncCode(relativePath, selection.line, selection.character, buildId) as SyncCodeResult | SyncCodeResponse;
+      this.openPdfPreview(false, { ...pdfLocationFrom(response), sourceText: editor.document.lineAt(selection.line).text });
       void vscode.window.showInformationMessage('Opened the compiled PDF for the current source location.');
     }, (error) => {
       if (!isSyncTexMiss(error)) return false;
@@ -177,9 +180,9 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     );
     this.panel = panel;
     panel.onDidDispose(() => { this.panel = undefined; }, undefined, this.context.subscriptions);
-    panel.webview.onDidReceiveMessage((message: { type?: string; page?: number; h?: number; v?: number; fallbackH?: number; fallbackV?: number; identifier?: string; message?: string }) => {
+    panel.webview.onDidReceiveMessage((message: { type?: string; page?: number; h?: number; v?: number; nearby?: Array<{ h: number; v: number }>; identifier?: string; message?: string }) => {
       if (message.type === 'openSource' && message.page !== undefined && message.h !== undefined && message.v !== undefined) {
-        void this.openSourceFromCoordinates(message.page, message.h, message.v, message.identifier, message.fallbackH, message.fallbackV);
+        void this.openSourceFromCoordinates(message.page, message.h, message.v, message.identifier, message.nearby);
       }
       if (message.type === 'previewReady' || message.type === 'reloadPdf') {
         void this.loadPdf(panel);
@@ -253,7 +256,7 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     }
   }
 
-  private async openSourceFromCoordinates(page: number, h: number, v: number, identifier?: string, fallbackH?: number, fallbackV?: number): Promise<void> {
+  private async openSourceFromCoordinates(page: number, h: number, v: number, identifier?: string, nearby: Array<{ h: number; v: number }> = []): Promise<void> {
     if (this.syncTexInFlight) {
       void vscode.window.showInformationMessage('Ofsync: A SyncTeX lookup is still running. Please wait for it to finish.');
       return;
@@ -270,11 +273,10 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
         try {
           response = await this.client().syncPdf(page, h, v, buildId) as SyncPdfResult | SyncPdfResponse;
         } catch (error) {
-          if (!isSyncTexMiss(error) || fallbackH === undefined || fallbackV === undefined || (fallbackH === h && fallbackV === v)) {
+          if (!isSyncTexMiss(error)) {
             throw error;
           }
-          await delay(150);
-          response = await this.client().syncPdf(page, fallbackH, fallbackV, buildId) as SyncPdfResult | SyncPdfResponse;
+          response = await this.lookupNearbySource(page, nearby, buildId);
         }
         await this.revealSource(sourceLocationFrom(response), identifier);
       }, (error) => {
@@ -285,6 +287,20 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     } finally {
       this.syncTexInFlight = false;
     }
+  }
+
+  private async lookupNearbySource(page: number, nearby: Array<{ h: number; v: number }>, buildId: string): Promise<SyncPdfResult | SyncPdfResponse> {
+    const deadline = Date.now() + 5_000;
+    for (const candidate of nearby.slice(0, 12)) {
+      if (Date.now() >= deadline) break;
+      await delay(80);
+      try {
+        return await this.client().syncPdf(page, candidate.h, candidate.v, buildId) as SyncPdfResult | SyncPdfResponse;
+      } catch (error) {
+        if (!isSyncTexMiss(error)) throw error;
+      }
+    }
+    throw new Error('No SyncTeX mapping found near the selected PDF text.');
   }
 
   private async loadPdf(panel: vscode.WebviewPanel): Promise<void> {
@@ -442,7 +458,7 @@ function selectionForSourceLocation(document: vscode.TextDocument, position: vsc
 }
 
 function isSyncTexMiss(error: unknown): boolean {
-  return error instanceof Error && /POST \/api\/synctex\/(?:pdf|code) failed: (Internal Server Error|HTTP 4(?:22|29)|HTTP 500)/.test(error.message);
+  return error instanceof Error && /POST \/api\/synctex\/(?:pdf|code) failed: (?:No SyncTeX mapping found|Internal Server Error|HTTP 4(?:22|29)|HTTP 500)/.test(error.message);
 }
 
 function delay(milliseconds: number): Promise<void> {

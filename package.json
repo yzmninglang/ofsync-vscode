@@ -2,7 +2,7 @@
     "name": "ofsync-vscode",
     "displayName": "Ofsync",
     "description": "Visual Studio Code integration for the local ofsync daemon.",
-    "version": "0.1.3",
+    "version": "0.1.4",
     "private": true,
     "engines": {
         "vscode": "^1.85.0"
