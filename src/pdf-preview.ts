@@ -37,6 +37,8 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
     .text-layer{position:absolute;inset:0;overflow:hidden;line-height:1;text-size-adjust:none;transform-origin:0 0}
     .text-item{position:absolute;display:block;white-space:pre;transform-origin:0 0;color:transparent;cursor:text;line-height:1}
     .text-item::selection{background:#4c9ffe66}
+    .sync-highlight{position:absolute;width:150px;height:32px;transform:translate(-50%,-50%);border:3px solid #ffcc00;border-radius:6px;background:#ffcc0038;box-shadow:0 0 0 4px #ffcc0040,0 0 22px 8px #ffcc00cc;pointer-events:none;z-index:4;animation:sync-highlight 1s ease-in-out 3}
+    @keyframes sync-highlight{0%,100%{opacity:.08;box-shadow:0 0 0 2px #ffcc0018,0 0 8px 2px #ffcc0055}50%{opacity:1;box-shadow:0 0 0 6px #ffcc0077,0 0 30px 12px #ffcc00ee}}
     #message{padding:20px;color:var(--vscode-descriptionForeground)}
   </style>
 </head>
@@ -67,6 +69,17 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
       const desiredLeft = pageElement.offsetLeft + point[0] - viewer.clientWidth * 0.5;
       const desiredTop = pageElement.offsetTop + pageElement.offsetHeight - point[1] - viewer.clientHeight * 0.4;
       viewer.scrollTo({ left: Math.max(0, desiredLeft), top: Math.max(0, desiredTop), behavior: 'smooth' });
+    }
+
+    function highlightSourceLocation(pageElement, viewport) {
+      if (target.h === undefined || target.v === undefined) return;
+      const point = viewport.convertToPdfPoint(target.h, target.v);
+      const highlight = document.createElement('div');
+      highlight.className = 'sync-highlight';
+      highlight.style.left = point[0] + 'px';
+      highlight.style.top = (pageElement.offsetHeight - point[1]) + 'px';
+      pageElement.append(highlight);
+      window.setTimeout(() => highlight.remove(), 3200);
     }
 
     function addTextLayer(pageElement, viewport, textContent) {
@@ -109,19 +122,26 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
           pageElement.dataset.pageNumber = String(pageNumber);
           pageElement.append(canvas);
           pageElement.addEventListener('dblclick', event => {
+            const textItem = event.target instanceof Element ? event.target.closest('.text-item') : undefined;
+            if (!textItem) {
+              vscode.postMessage({ type: 'syncMiss', message: 'Double-click a rendered text item, not empty space or an image.' });
+              return;
+            }
             const bounds = canvas.getBoundingClientRect();
             const scaleX = canvas.width / bounds.width;
             const scaleY = canvas.height / bounds.height;
             const point = viewport.convertToPdfPoint((event.clientX - bounds.left) * scaleX, (event.clientY - bounds.top) * scaleY);
-            const text = event.target instanceof Element ? event.target.closest('.text-item')?.textContent?.trim() : undefined;
-            vscode.postMessage({ type: 'openSource', page: pageNumber, h: point[0], v: viewport.viewBox[3] - point[1], identifier: text || undefined });
+            vscode.postMessage({ type: 'openSource', page: pageNumber, h: point[0], v: viewport.viewBox[3] - point[1], identifier: textItem.textContent?.trim() || undefined });
           });
           viewer.append(pageElement);
           await pdfPage.render({ canvasContext: context, viewport }).promise;
           addTextLayer(pageElement, viewport, await pdfPage.getTextContent());
           if (pageNumber === target.page) sourceTarget = { pageElement, viewport };
         }
-        if (sourceTarget) scrollToSourceLocation(sourceTarget.pageElement, sourceTarget.viewport);
+        if (sourceTarget) {
+          scrollToSourceLocation(sourceTarget.pageElement, sourceTarget.viewport);
+          highlightSourceLocation(sourceTarget.pageElement, sourceTarget.viewport);
+        }
       } catch (error) {
         viewer.replaceChildren(message);
         message.textContent = 'Unable to render the compiled PDF: ' + (error instanceof Error ? error.message : String(error));

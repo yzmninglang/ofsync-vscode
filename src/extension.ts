@@ -131,6 +131,10 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
       const response = await this.client().syncCode(relativePath, selection.line + 1, selection.character + 1, buildId) as SyncCodeResult | SyncCodeResponse;
       this.openPdfPreview(false, pdfLocationFrom(response));
       void vscode.window.showInformationMessage('Opened the compiled PDF for the current source location.');
+    }, (error) => {
+      if (!isSyncTexMiss(error)) return false;
+      void vscode.window.showInformationMessage('Ofsync: This source position has no PDF SyncTeX mapping. Try a nearby source line or compile again.');
+      return true;
     });
   }
 
@@ -156,6 +160,10 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     await this.runOperation('Looking up source location…', async () => {
       const response = await this.client().syncPdf(Number(page), Number(horizontal), Number(vertical), buildId) as SyncPdfResult | SyncPdfResponse;
       await this.revealSource(sourceLocationFrom(response));
+    }, (error) => {
+      if (!isSyncTexMiss(error)) return false;
+      void vscode.window.showInformationMessage('Ofsync: This PDF position has no SyncTeX source mapping. Try another text item or compile again.');
+      return true;
     });
   }
 
@@ -168,12 +176,15 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     );
     this.panel = panel;
     panel.onDidDispose(() => { this.panel = undefined; }, undefined, this.context.subscriptions);
-    panel.webview.onDidReceiveMessage((message: { type?: string; page?: number; h?: number; v?: number; identifier?: string }) => {
+    panel.webview.onDidReceiveMessage((message: { type?: string; page?: number; h?: number; v?: number; identifier?: string; message?: string }) => {
       if (message.type === 'openSource' && message.page !== undefined && message.h !== undefined && message.v !== undefined) {
         void this.openSourceFromCoordinates(message.page, message.h, message.v, message.identifier);
       }
       if (message.type === 'previewReady' || message.type === 'reloadPdf') {
         void this.loadPdf(panel);
+      }
+      if (message.type === 'syncMiss') {
+        void vscode.window.showInformationMessage(`Ofsync: ${message.message ?? 'No source mapping at this PDF location.'}`);
       }
     }, undefined, this.context.subscriptions);
     panel.webview.html = this.pdfHtml(panel.webview, refresh, location);
@@ -228,12 +239,14 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     this.statusItem.backgroundColor = conflicts ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
   }
 
-  private async runOperation(label: string, operation: () => Promise<void>): Promise<void> {
+  private async runOperation(label: string, operation: () => Promise<void>, onError?: (error: unknown) => boolean): Promise<void> {
     try {
       await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Ofsync: ${label}` }, operation);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      void vscode.window.showErrorMessage(`Ofsync: ${message}`);
+      if (!onError?.(error)) {
+        const message = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`Ofsync: ${message}`);
+      }
     } finally {
       await this.poll();
     }
@@ -248,6 +261,10 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     await this.runOperation('Looking up source location…', async () => {
       const response = await this.client().syncPdf(page, h, v, buildId) as SyncPdfResult | SyncPdfResponse;
       await this.revealSource(sourceLocationFrom(response), identifier);
+    }, (error) => {
+      if (!isSyncTexMiss(error)) return false;
+      void vscode.window.showInformationMessage('Ofsync: This PDF text position has no SyncTeX source mapping. Try another text item or compile again.');
+      return true;
     });
   }
 
@@ -368,7 +385,8 @@ function numberValue(value: unknown): number | undefined {
 
 function pdfLocationFrom(response: SyncCodeResult | SyncCodeResponse): SyncCodeResult {
   if ('pdf' in response && Array.isArray(response.pdf)) {
-    const location = response.pdf.find(isRecord);
+    const locations = response.pdf.filter(isRecord);
+    const location = locations[Math.ceil(locations.length / 2) - 1];
     if (!location) {
       throw new Error('The daemon returned no PDF location for this source position.');
     }
@@ -402,6 +420,10 @@ function selectionForSourceLocation(document: vscode.TextDocument, position: vsc
     }
   }
   return new vscode.Selection(position, position);
+}
+
+function isSyncTexMiss(error: unknown): boolean {
+  return error instanceof Error && /POST \/api\/synctex\/(?:pdf|code) failed: (Internal Server Error|HTTP 4(?:22|29)|HTTP 500)/.test(error.message);
 }
 
 function isChildPath(root: string, candidate: string): boolean {

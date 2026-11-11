@@ -44,7 +44,7 @@ export class OfsyncClient {
   }
 
   public syncPdf(page: number, h: number, v: number, buildId: string): Promise<unknown> {
-    return this.request<unknown>('POST', '/api/synctex/pdf', { page, h, v, buildId });
+    return this.request<unknown>('POST', '/api/synctex/pdf', { page, h: roundSyncTexCoordinate(h), v: roundSyncTexCoordinate(v), buildId });
   }
 
   public pdfUrl(cacheBust = false): string {
@@ -122,4 +122,8 @@ export class OfsyncClient {
       request.end();
     });
   }
+}
+
+function roundSyncTexCoordinate(value: number): number {
+  return Math.round(value * 100) / 100;
 }
