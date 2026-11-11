@@ -40,11 +40,11 @@ export class OfsyncClient {
   }
 
   public syncCode(file: string, line: number, column: number, buildId: string): Promise<unknown> {
-    return this.request<unknown>('POST', '/api/synctex/code', { file, line, column, buildId });
+    return this.request<unknown>('POST', '/api/synctex/code', { file, line, column, buildId }, 5_000);
   }
 
   public syncPdf(page: number, h: number, v: number, buildId: string): Promise<unknown> {
-    return this.request<unknown>('POST', '/api/synctex/pdf', { page, h: roundSyncTexCoordinate(h), v: roundSyncTexCoordinate(v), buildId });
+    return this.request<unknown>('POST', '/api/synctex/pdf', { page, h: roundSyncTexCoordinate(h), v: roundSyncTexCoordinate(v), buildId }, 5_000);
   }
 
   public pdfUrl(cacheBust = false): string {
@@ -79,7 +79,7 @@ export class OfsyncClient {
     });
   }
 
-  private request<T>(method: 'GET' | 'POST', endpoint: string, body?: unknown): Promise<T> {
+  private request<T>(method: 'GET' | 'POST', endpoint: string, body?: unknown, timeoutMs = 10_000): Promise<T> {
     const url = new URL(endpoint, this.serverUrl);
     const payload = body === undefined ? undefined : JSON.stringify(body);
     const transport = url.protocol === 'https:' ? https.request : http.request;
@@ -91,7 +91,7 @@ export class OfsyncClient {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload),
         },
-        timeout: 10_000,
+        timeout: timeoutMs,
       }, (result) => {
         const chunks: Buffer[] = [];
         result.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));

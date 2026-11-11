@@ -65,19 +65,36 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
         pageElement.scrollIntoView({ block: 'center' });
         return;
       }
-      const point = viewport.convertToPdfPoint(target.h, target.v);
-      const desiredLeft = pageElement.offsetLeft + point[0] - viewer.clientWidth * 0.5;
-      const desiredTop = pageElement.offsetTop + pageElement.offsetHeight - point[1] - viewer.clientHeight * 0.4;
+      const [left, top] = viewport.convertToPdfPoint(target.h, target.v);
+      const desiredLeft = pageElement.offsetLeft + left - viewer.clientWidth * 0.5;
+      const desiredTop = pageElement.offsetTop + pageElement.offsetHeight - top - viewer.clientHeight * 0.4;
       viewer.scrollTo({ left: Math.max(0, desiredLeft), top: Math.max(0, desiredTop), behavior: 'smooth' });
     }
 
     function highlightSourceLocation(pageElement, viewport) {
       if (target.h === undefined || target.v === undefined) return;
-      const point = viewport.convertToPdfPoint(target.h, target.v);
+      const pdfPoint = viewport.convertToPdfPoint(target.h, target.v);
+      const point = viewport.convertToViewportPoint(pdfPoint[0], pdfPoint[1]);
       const highlight = document.createElement('div');
       highlight.className = 'sync-highlight';
-      highlight.style.left = point[0] + 'px';
-      highlight.style.top = (pageElement.offsetHeight - point[1]) + 'px';
+      const nearestText = [...pageElement.querySelectorAll('.text-item')].map(item => {
+        const rect = item.getBoundingClientRect();
+        const pageRect = pageElement.getBoundingClientRect();
+        const left = rect.left - pageRect.left;
+        const top = rect.top - pageRect.top;
+        const centerX = left + rect.width / 2;
+        const centerY = top + rect.height / 2;
+        return { left, top, width: rect.width, height: rect.height, distance: Math.hypot(centerX - point[0], centerY - point[1]) };
+      }).sort((first, second) => first.distance - second.distance)[0];
+      if (nearestText) {
+        highlight.style.width = Math.max(12, nearestText.width + 6) + 'px';
+        highlight.style.height = Math.max(12, nearestText.height + 6) + 'px';
+        highlight.style.left = (nearestText.left + nearestText.width / 2) + 'px';
+        highlight.style.top = (nearestText.top + nearestText.height / 2) + 'px';
+      } else {
+        highlight.style.left = point[0] + 'px';
+        highlight.style.top = point[1] + 'px';
+      }
       pageElement.append(highlight);
       window.setTimeout(() => highlight.remove(), 3200);
     }
@@ -131,7 +148,9 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
             const scaleX = canvas.width / bounds.width;
             const scaleY = canvas.height / bounds.height;
             const point = viewport.convertToPdfPoint((event.clientX - bounds.left) * scaleX, (event.clientY - bounds.top) * scaleY);
-            vscode.postMessage({ type: 'openSource', page: pageNumber, h: point[0], v: viewport.viewBox[3] - point[1], identifier: textItem.textContent?.trim() || undefined });
+            const textBounds = textItem.getBoundingClientRect();
+            const center = viewport.convertToPdfPoint((textBounds.left + textBounds.width / 2 - bounds.left) * scaleX, (textBounds.top + textBounds.height / 2 - bounds.top) * scaleY);
+            vscode.postMessage({ type: 'openSource', page: pageNumber, h: point[0], v: viewport.viewBox[3] - point[1], fallbackH: center[0], fallbackV: viewport.viewBox[3] - center[1], identifier: textItem.textContent?.trim() || undefined });
           });
           viewer.append(pageElement);
           await pdfPage.render({ canvasContext: context, viewport }).promise;

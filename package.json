@@ -1,160 +1,158 @@
 {
-    "name":  "ofsync-vscode",
-    "displayName":  "Ofsync",
-    "description":  "Visual Studio Code integration for the local ofsync daemon.",
-    "version":  "0.1.2",
-    "private":  true,
-    "engines":  {
-                    "vscode":  "^1.85.0"
+    "name": "ofsync-vscode",
+    "displayName": "Ofsync",
+    "description": "Visual Studio Code integration for the local ofsync daemon.",
+    "version": "0.1.3",
+    "private": true,
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onStartupFinished",
+        "onCommand:ofsync.openPdfPreview",
+        "onCommand:ofsync.compile",
+        "onCommand:ofsync.sync",
+        "onCommand:ofsync.showPdfLocation",
+        "onCommand:ofsync.openSourceLocation",
+        "onCommand:ofsync.showStatus"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "ofsync.openPdfPreview",
+                "title": "Ofsync: Open PDF Preview",
+                "icon": "$(open-preview)"
+            },
+            {
+                "command": "ofsync.compile",
+                "title": "Ofsync: Compile Remote Project",
+                "icon": "$(play)"
+            },
+            {
+                "command": "ofsync.sync",
+                "title": "Ofsync: Sync Now",
+                "icon": "$(sync)"
+            },
+            {
+                "command": "ofsync.showPdfLocation",
+                "title": "Ofsync: Show Current Source Location in PDF",
+                "icon": "$(go-to-file)"
+            },
+            {
+                "command": "ofsync.openSourceLocation",
+                "title": "Ofsync: Open Source Location from PDF Coordinates",
+                "icon": "$(symbol-file)"
+            },
+            {
+                "command": "ofsync.showStatus",
+                "title": "Ofsync: Show Connection Status",
+                "icon": "$(info)"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "ofsync.compile",
+                "key": "ctrl+alt+b",
+                "mac": "cmd+alt+b",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "ofsync.showPdfLocation",
+                "key": "ctrl+alt+j",
+                "mac": "cmd+alt+j",
+                "when": "editorTextFocus && editorLangId == latex"
+            },
+            {
+                "command": "ofsync.openPdfPreview",
+                "key": "ctrl+alt+p",
+                "mac": "cmd+alt+p"
+            }
+        ],
+        "configuration": {
+            "title": "Ofsync",
+            "properties": {
+                "ofsync.serverUrl": {
+                    "type": "string",
+                    "default": "http://127.0.0.1:43821",
+                    "description": "Base URL of the local ofsync daemon."
                 },
-    "categories":  [
-                       "Other"
-                   ],
-    "activationEvents":  [
-                             "onStartupFinished",
-                             "onCommand:ofsync.openPdfPreview",
-                             "onCommand:ofsync.compile",
-                             "onCommand:ofsync.sync",
-                             "onCommand:ofsync.showPdfLocation",
-                             "onCommand:ofsync.openSourceLocation",
-                             "onCommand:ofsync.showStatus"
-                         ],
-    "main":  "./out/extension.js",
-    "contributes":  {
-                        "commands":  [
-                                         {
-                                             "command":  "ofsync.openPdfPreview",
-                                             "title":  "Ofsync: Open PDF Preview",
-                                             "icon":  "$(open-preview)"
-                                         },
-                                         {
-                                             "command":  "ofsync.compile",
-                                             "title":  "Ofsync: Compile Remote Project",
-                                             "icon":  "$(play)"
-                                         },
-                                         {
-                                             "command":  "ofsync.sync",
-                                             "title":  "Ofsync: Sync Now",
-                                             "icon":  "$(sync)"
-                                         },
-                                         {
-                                             "command":  "ofsync.showPdfLocation",
-                                             "title":  "Ofsync: Show Current Source Location in PDF",
-                                             "icon":  "$(go-to-file)"
-                                         },
-                                         {
-                                             "command":  "ofsync.openSourceLocation",
-                                             "title":  "Ofsync: Open Source Location from PDF Coordinates",
-                                             "icon":  "$(symbol-file)"
-                                         },
-                                         {
-                                             "command":  "ofsync.showStatus",
-                                             "title":  "Ofsync: Show Connection Status",
-                                             "icon":  "$(info)"
-                                         }
-                                     ],
-                        "keybindings":  [
-                                            {
-                                                "command":  "ofsync.compile",
-                                                "key":  "ctrl+alt+b",
-                                                "mac":  "cmd+alt+b",
-                                                "when":  "editorTextFocus"
-                                            },
-                                            {
-                                                "command":  "ofsync.showPdfLocation",
-                                                "key":  "ctrl+alt+j",
-                                                "mac":  "cmd+alt+j",
-                                                "when":  "editorTextFocus \u0026\u0026 editorLangId == latex"
-                                            },
-                                            {
-                                                "command":  "ofsync.openPdfPreview",
-                                                "key":  "ctrl+alt+p",
-                                                "mac":  "cmd+alt+p"
-                                            }
-                                        ],
-                        "configuration":  {
-                                              "title":  "Ofsync",
-                                              "properties":  {
-                                                                 "ofsync.serverUrl":  {
-                                                                                          "type":  "string",
-                                                                                          "default":  "http://127.0.0.1:43821",
-                                                                                          "description":  "Base URL of the local ofsync daemon."
-                                                                                      },
-                                                                 "ofsync.projectRoot":  {
-                                                                                            "type":  "string",
-                                                                                            "default":  "",
-                                                                                            "description":  "Absolute local project directory. Empty uses the first VS Code workspace folder."
-                                                                                        },
-                                                                 "ofsync.buildId":  {
-                                                                                        "type":  "string",
-                                                                                        "default":  "",
-                                                                                        "description":  "Fallback remote Build ID for SyncTeX lookups when connected to an older ofsync daemon."
-                                                                                    },
-                                                                 "ofsync.statusPollInterval":  {
-                                                                                                   "type":  "number",
-                                                                                                   "default":  3000,
-                                                                                                   "minimum":  1000,
-                                                                                                   "description":  "Milliseconds between local ofsync connection status checks."
-                                                                                               }
-                                                             }
-                                          },
-                        "viewsContainers":  {
-                                                "activitybar":  [
-                                                                    {
-                                                                        "id":  "ofsync",
-                                                                        "title":  "Ofsync",
-                                                                        "icon":  "resources/ofsync.svg"
-                                                                    }
-                                                                ]
-                                            },
-                        "views":  {
-                                      "ofsync":  [
-                                                     {
-                                                         "type":  "webview",
-                                                         "id":  "ofsync.controlPanel",
-                                                         "name":  "Connection \u0026 PDF"
-                                                     }
-                                                 ]
-                                  },
-                        "menus":  {
-                                      "editor/title":  [
-                                                           {
-                                                               "command":  "ofsync.showPdfLocation",
-                                                               "when":  "resourceExtname == .tex",
-                                                               "group":  "navigation@100"
-                                                           },
-                                                           {
-                                                               "command":  "ofsync.compile",
-                                                               "when":  "resourceExtname == .tex",
-                                                               "group":  "navigation@101"
-                                                           }
-                                                       ]
-                                  }
-                    },
-    "scripts":  {
-                    "compile":  "tsc -p ./",
-                    "watch":  "tsc -watch -p ./",
-                    "lint":  "eslint src --ext ts",
-                    "vscode:prepublish":  "npm run compile",
-                    "package":  "vsce package --no-dependencies"
+                "ofsync.projectRoot": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Absolute local project directory. Empty uses the first VS Code workspace folder."
                 },
-    "devDependencies":  {
-                            "@types/node":  "^20.10.0",
-                            "@types/vscode":  "^1.85.0",
-                            "@typescript-eslint/eslint-plugin":  "^6.13.0",
-                            "@typescript-eslint/parser":  "^6.13.0",
-                            "eslint":  "^8.54.0",
-                            "typescript":  "^5.3.0",
-                            "@vscode/vsce":  "^3.6.2"
-                        },
-    "dependencies":  {
-
-                     },
-    "files":  [
-                  "out/**",
-                  "media/pdfjs/**",
-                  "resources/**",
-                  "README.md",
-                  "package.json"
-              ]
+                "ofsync.buildId": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Fallback remote Build ID for SyncTeX lookups when connected to an older ofsync daemon."
+                },
+                "ofsync.statusPollInterval": {
+                    "type": "number",
+                    "default": 3000,
+                    "minimum": 1000,
+                    "description": "Milliseconds between local ofsync connection status checks."
+                }
+            }
+        },
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "ofsync",
+                    "title": "Ofsync",
+                    "icon": "resources/ofsync.svg"
+                }
+            ]
+        },
+        "views": {
+            "ofsync": [
+                {
+                    "type": "webview",
+                    "id": "ofsync.controlPanel",
+                    "name": "Connection & PDF"
+                }
+            ]
+        },
+        "menus": {
+            "editor/title": [
+                {
+                    "command": "ofsync.showPdfLocation",
+                    "when": "resourceExtname == .tex",
+                    "group": "navigation@100"
+                },
+                {
+                    "command": "ofsync.compile",
+                    "when": "resourceExtname == .tex",
+                    "group": "navigation@101"
+                }
+            ]
+        }
+    },
+    "scripts": {
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "lint": "eslint src --ext ts",
+        "vscode:prepublish": "npm run compile",
+        "package": "vsce package --no-dependencies"
+    },
+    "devDependencies": {
+        "@types/node": "^20.10.0",
+        "@types/vscode": "^1.85.0",
+        "@typescript-eslint/eslint-plugin": "^6.13.0",
+        "@typescript-eslint/parser": "^6.13.0",
+        "eslint": "^8.54.0",
+        "typescript": "^5.3.0",
+        "@vscode/vsce": "^3.6.2"
+    },
+    "dependencies": {},
+    "files": [
+        "out/**",
+        "media/pdfjs/**",
+        "resources/**",
+        "README.md",
+        "package.json"
+    ]
 }

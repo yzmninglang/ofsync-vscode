@@ -54,6 +54,7 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
   private view: vscode.WebviewView | undefined;
   private connected = false;
   private status: DaemonStatus | undefined;
+  private syncTexInFlight = false;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.statusItem.name = 'Ofsync connection';
@@ -176,9 +177,9 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     );
     this.panel = panel;
     panel.onDidDispose(() => { this.panel = undefined; }, undefined, this.context.subscriptions);
-    panel.webview.onDidReceiveMessage((message: { type?: string; page?: number; h?: number; v?: number; identifier?: string; message?: string }) => {
+    panel.webview.onDidReceiveMessage((message: { type?: string; page?: number; h?: number; v?: number; fallbackH?: number; fallbackV?: number; identifier?: string; message?: string }) => {
       if (message.type === 'openSource' && message.page !== undefined && message.h !== undefined && message.v !== undefined) {
-        void this.openSourceFromCoordinates(message.page, message.h, message.v, message.identifier);
+        void this.openSourceFromCoordinates(message.page, message.h, message.v, message.identifier, message.fallbackH, message.fallbackV);
       }
       if (message.type === 'previewReady' || message.type === 'reloadPdf') {
         void this.loadPdf(panel);
@@ -252,20 +253,38 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     }
   }
 
-  private async openSourceFromCoordinates(page: number, h: number, v: number, identifier?: string): Promise<void> {
+  private async openSourceFromCoordinates(page: number, h: number, v: number, identifier?: string, fallbackH?: number, fallbackV?: number): Promise<void> {
+    if (this.syncTexInFlight) {
+      void vscode.window.showInformationMessage('Ofsync: A SyncTeX lookup is still running. Please wait for it to finish.');
+      return;
+    }
     const buildId = this.buildId();
     if (!buildId) {
       void vscode.window.showWarningMessage('Set “Ofsync: Build Id” before opening a source location.');
       return;
     }
-    await this.runOperation('Looking up source location…', async () => {
-      const response = await this.client().syncPdf(page, h, v, buildId) as SyncPdfResult | SyncPdfResponse;
-      await this.revealSource(sourceLocationFrom(response), identifier);
-    }, (error) => {
-      if (!isSyncTexMiss(error)) return false;
-      void vscode.window.showInformationMessage('Ofsync: This PDF text position has no SyncTeX source mapping. Try another text item or compile again.');
-      return true;
-    });
+    this.syncTexInFlight = true;
+    try {
+      await this.runOperation('Looking up source location…', async () => {
+        let response: SyncPdfResult | SyncPdfResponse;
+        try {
+          response = await this.client().syncPdf(page, h, v, buildId) as SyncPdfResult | SyncPdfResponse;
+        } catch (error) {
+          if (!isSyncTexMiss(error) || fallbackH === undefined || fallbackV === undefined || (fallbackH === h && fallbackV === v)) {
+            throw error;
+          }
+          await delay(150);
+          response = await this.client().syncPdf(page, fallbackH, fallbackV, buildId) as SyncPdfResult | SyncPdfResponse;
+        }
+        await this.revealSource(sourceLocationFrom(response), identifier);
+      }, (error) => {
+        if (!isSyncTexMiss(error)) return false;
+        void vscode.window.showInformationMessage('Ofsync: This PDF text position has no SyncTeX source mapping. Try another text item or compile again.');
+        return true;
+      });
+    } finally {
+      this.syncTexInFlight = false;
+    }
   }
 
   private async loadPdf(panel: vscode.WebviewPanel): Promise<void> {
@@ -424,6 +443,10 @@ function selectionForSourceLocation(document: vscode.TextDocument, position: vsc
 
 function isSyncTexMiss(error: unknown): boolean {
   return error instanceof Error && /POST \/api\/synctex\/(?:pdf|code) failed: (Internal Server Error|HTTP 4(?:22|29)|HTTP 500)/.test(error.message);
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function isChildPath(root: string, candidate: string): boolean {
