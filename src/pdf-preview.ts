@@ -176,9 +176,11 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
     async function renderPdf(bytes, preserveState = true, navigateToTarget = false) {
       const version = ++renderVersion;
       try {
+        const renderBytes = new Uint8Array(bytes);
+        const retainedBytes = new Uint8Array(bytes);
         pdfjs ??= await import(pdfJsUri);
         pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUri;
-        const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+        const pdf = await pdfjs.getDocument({ data: renderBytes }).promise;
         const staging = document.createElement('div');
         staging.className = 'staging';
         const nextPages = new Map();
@@ -225,7 +227,7 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
           nextPages.set(pageNumber, { pageElement, viewport });
         }
         if (version !== renderVersion) { staging.remove(); return; }
-        currentPdf = bytes;
+        currentPdf = retainedBytes;
         renderedPages = nextPages;
         const pages = [...staging.childNodes];
         viewer.replaceChildren(...pages);

@@ -58,6 +58,7 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
   private connected = false;
   private status: DaemonStatus | undefined;
   private syncTexInFlight = false;
+  private previewBuildId: string | undefined;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.statusItem.name = 'Ofsync connection';
@@ -93,7 +94,7 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
 
   public async compile(): Promise<void> {
     await this.runOperation('Compiling remote project…', async () => {
-      await this.client().sync();
+      await this.waitForPendingSynchronization();
       const result = await this.client().compile();
       this.updateBuildId(result);
       await this.poll();
@@ -229,6 +230,7 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
   }
 
   private async poll(): Promise<void> {
+    const previousBuildId = this.status?.latestCompile?.buildId;
     try {
       const client = this.client();
       await client.health();
@@ -240,6 +242,11 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     }
     this.updateStatusItem();
     this.publishState();
+    const buildId = this.status?.latestCompile?.buildId;
+    if (this.panel && buildId && buildId !== previousBuildId && buildId !== this.previewBuildId) {
+      this.previewBuildId = buildId;
+      void this.loadPdf(this.panel, true, false);
+    }
   }
 
   private updateStatusItem(): void {
@@ -320,10 +327,23 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
   private async loadPdf(panel: vscode.WebviewPanel, preserveView = true, navigateToTarget = false): Promise<void> {
     try {
       const bytes = await this.client().pdf();
+      this.previewBuildId = this.status?.latestCompile?.buildId;
       await panel.webview.postMessage({ type: 'pdfData', bytes, preserveView, navigateToTarget });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await panel.webview.postMessage({ type: 'pdfError', message: `Unable to load compiled PDF: ${message}` });
+    }
+  }
+
+  private async waitForPendingSynchronization(): Promise<void> {
+    const deadline = Date.now() + 10_000;
+    let status = await this.client().status();
+    while (status.phase === 'syncing' && Date.now() < deadline) {
+      await delay(250);
+      status = await this.client().status();
+    }
+    if ((status.pendingPaths?.length ?? 0) > 0) {
+      await this.client().sync();
     }
   }
 

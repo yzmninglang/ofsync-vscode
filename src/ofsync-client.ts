@@ -32,11 +32,11 @@ export class OfsyncClient {
   }
 
   public sync(): Promise<unknown> {
-    return this.request<unknown>('POST', '/api/sync');
+    return this.request<unknown>('POST', '/api/sync', undefined, 60_000);
   }
 
   public compile(): Promise<unknown> {
-    return this.request<unknown>('POST', '/api/compile');
+    return this.request<unknown>('POST', '/api/compile', undefined, 120_000);
   }
 
   public syncCode(file: string, line: number, column: number, buildId: string): Promise<unknown> {
