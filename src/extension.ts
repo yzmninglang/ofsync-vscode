@@ -1,6 +1,6 @@
-﻿import * as path from 'node:path';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { DaemonStatus, OfsyncClient } from './ofsync-client';
+import { DaemonStatus, OfsyncClient, type ProjectMapping } from './ofsync-client';
 import { createPdfPreviewHtml } from './pdf-preview';
 
 const LATEX_EXTENSIONS = new Set(['.tex', '.ltx', '.latex']);
@@ -59,6 +59,8 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
   private status: DaemonStatus | undefined;
   private syncTexInFlight = false;
   private previewBuildId: string | undefined;
+  private projectMappingId: string | undefined;
+  private managerApi = false;
   private compilePromise: Promise<void> | undefined;
   private autoCompileTimer: NodeJS.Timeout | undefined;
   private autoCompileQueued = false;
@@ -275,9 +277,18 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
   private async poll(): Promise<void> {
     const previousBuildId = this.status?.latestCompile?.buildId;
     try {
+      const baseClient = new OfsyncClient(this.serverUrl(), undefined, true);
+      try {
+        const mappings = await baseClient.mappings();
+        this.managerApi = true;
+        this.projectMappingId = this.findProjectMapping(mappings.mappings)?.id;
+      } catch {
+        this.managerApi = false;
+        this.projectMappingId = undefined;
+      }
       const client = this.client();
       await client.health();
-      this.status = await client.status();
+      this.status = this.projectMappingId || !this.managerApi ? await client.status() : undefined;
       this.connected = true;
     } catch {
       this.connected = false;
@@ -297,6 +308,12 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
       this.statusItem.text = '$(debug-disconnect) Ofsync: offline';
       this.statusItem.tooltip = `Cannot reach ${this.serverUrl()}`;
       this.statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+      return;
+    }
+    if (this.managerApi && !this.projectMappingId) {
+      this.statusItem.text = '$(cloud) Ofsync: project not mapped';
+      this.statusItem.tooltip = `No Manager mapping matches ${this.projectRoot()}`;
+      this.statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
       return;
     }
     const pending = this.status?.pendingPaths?.length ?? 0;
@@ -413,7 +430,12 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
   }
 
   private client(): OfsyncClient {
-    return new OfsyncClient(this.serverUrl());
+    return new OfsyncClient(this.serverUrl(), this.projectMappingId, this.managerApi);
+  }
+
+  private findProjectMapping(mappings: ProjectMapping[]): ProjectMapping | undefined {
+    const root = path.resolve(this.projectRoot());
+    return mappings.find((mapping) => mapping.directory && path.resolve(mapping.directory) === root);
   }
 
   private serverUrl(): string {

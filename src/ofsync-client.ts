@@ -1,4 +1,4 @@
-﻿import * as http from 'node:http';
+import * as http from 'node:http';
 import * as https from 'node:https';
 
 export interface DaemonStatus {
@@ -20,35 +20,65 @@ export interface DaemonStatus {
   [key: string]: unknown;
 }
 
+export interface ProjectMapping {
+  id: string;
+  serverUrl?: string;
+  projectId?: string;
+  projectName?: string;
+  directory?: string;
+  paused?: boolean;
+  running?: boolean;
+  phase?: string;
+  conflicts?: number;
+  lastSyncAt?: string;
+  lastError?: string;
+}
+
+interface ProjectStatusResponse {
+  mapping?: ProjectMapping;
+  engine?: DaemonStatus;
+}
+
 export class OfsyncClient {
-  public constructor(private readonly serverUrl: string) {}
+  public constructor(private readonly serverUrl: string, private readonly projectId?: string, private readonly managerMode = false) {}
 
   public async health(): Promise<void> {
-    await this.request<unknown>('GET', '/api/health');
+    await this.request<unknown>('GET', this.projectId ? this.projectEndpoint('/status') : (this.managerMode ? '/api/manage/health' : '/api/health'));
   }
 
   public status(): Promise<DaemonStatus> {
-    return this.request<DaemonStatus>('GET', '/api/status');
+    if (!this.projectId) {
+      if (this.managerMode) return Promise.reject(new Error('No Ofsync project mapping matches the configured project root.'));
+      return this.request<DaemonStatus>('GET', '/api/status');
+    }
+    return this.request<ProjectStatusResponse>('GET', this.projectEndpoint('/status')).then((response) => response.engine ?? {
+      phase: response.mapping?.phase,
+      lastError: response.mapping?.lastError,
+    });
+  }
+
+  public mappings(): Promise<{ mappings: ProjectMapping[] }> {
+    return this.request<{ mappings: ProjectMapping[] }>('GET', '/api/manage/mappings');
   }
 
   public sync(): Promise<unknown> {
-    return this.request<unknown>('POST', '/api/sync', undefined, 60_000);
+    return this.request<unknown>('POST', this.projectEndpoint('/sync', '/api/sync'), undefined, 60_000);
   }
 
   public compile(): Promise<unknown> {
-    return this.request<unknown>('POST', '/api/compile', undefined, 120_000);
+    return this.request<unknown>('POST', this.projectEndpoint('/compile', '/api/compile'), undefined, 120_000);
   }
 
   public syncCode(file: string, line: number, column: number, buildId: string): Promise<unknown> {
-    return this.request<unknown>('POST', '/api/synctex/code', { file, line, column, buildId }, 5_000);
+    return this.request<unknown>('POST', this.projectEndpoint('/synctex/code', '/api/synctex/code'), { file, line, column, buildId }, 5_000);
   }
 
   public syncPdf(page: number, h: number, v: number, buildId: string): Promise<unknown> {
-    return this.request<unknown>('POST', '/api/synctex/pdf', { page, h: roundSyncTexCoordinate(h), v: roundSyncTexCoordinate(v), buildId }, 5_000);
+    return this.request<unknown>('POST', this.projectEndpoint('/synctex/pdf', '/api/synctex/pdf'), { page, h: roundSyncTexCoordinate(h), v: roundSyncTexCoordinate(v), buildId }, 5_000);
   }
 
   public pdfUrl(cacheBust = false): string {
-    const url = new URL('/api/pdf', this.serverUrl);
+    const url = new URL(this.projectEndpoint('/pdf', '/api/pdf'), this.serverUrl);
     if (cacheBust) {
       url.searchParams.set('t', String(Date.now()));
     }
@@ -56,7 +86,7 @@ export class OfsyncClient {
   }
 
   public pdf(cacheBust = true): Promise<Uint8Array> {
-    const url = new URL('/api/pdf', this.serverUrl);
+    const url = new URL(this.projectEndpoint('/pdf', '/api/pdf'), this.serverUrl);
     if (cacheBust) {
       url.searchParams.set('t', String(Date.now()));
     }
@@ -84,6 +114,13 @@ export class OfsyncClient {
       request.on('error', reject);
       request.end();
     });
+  }
+
+  private projectEndpoint(endpoint: string, legacyEndpoint?: string): string {
+    if (this.managerMode && !this.projectId) {
+      throw new Error('No Ofsync project mapping matches the configured project root.');
+    }
+    return this.projectId ? `/api/projects/${encodeURIComponent(this.projectId)}${endpoint}` : legacyEndpoint ?? endpoint;
   }
 
   private request<T>(method: 'GET' | 'POST', endpoint: string, body?: unknown, timeoutMs = 10_000): Promise<T> {
