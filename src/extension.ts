@@ -59,17 +59,24 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
   private status: DaemonStatus | undefined;
   private syncTexInFlight = false;
   private previewBuildId: string | undefined;
+  private compilePromise: Promise<void> | undefined;
+  private autoCompileTimer: NodeJS.Timeout | undefined;
+  private autoCompileQueued = false;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.statusItem.name = 'Ofsync connection';
     this.statusItem.command = 'ofsync.showStatus';
     this.statusItem.show();
+    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((document) => this.onDocumentSaved(document)));
     this.startPolling();
   }
 
   public dispose(): void {
     if (this.poller) {
       clearInterval(this.poller);
+    }
+    if (this.autoCompileTimer) {
+      clearTimeout(this.autoCompileTimer);
     }
     this.statusItem.dispose();
   }
@@ -92,14 +99,29 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     this.publishState();
   }
 
-  public async compile(): Promise<void> {
-    await this.runOperation('Compiling remote project…', async () => {
+  public compile(): Promise<void> {
+    if (this.autoCompileTimer) {
+      clearTimeout(this.autoCompileTimer);
+      this.autoCompileTimer = undefined;
+    }
+    if (this.compilePromise) {
+      return this.compilePromise;
+    }
+    const operation = this.runOperation('Compiling remote project…', async () => {
       await this.waitForPendingSynchronization();
       const result = await this.client().compile();
       this.updateBuildId(result);
       await this.poll();
       this.openPdfPreview(true);
     });
+    this.compilePromise = operation.finally(() => {
+      this.compilePromise = undefined;
+      if (this.autoCompileQueued) {
+        this.autoCompileQueued = false;
+        this.scheduleAutoCompile(250);
+      }
+    });
+    return this.compilePromise;
   }
 
   public async sync(): Promise<void> {
@@ -227,6 +249,27 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     void this.poll();
     const interval = Math.max(1000, vscode.workspace.getConfiguration('ofsync').get<number>('statusPollInterval', 3000));
     this.poller = setInterval(() => void this.poll(), interval);
+  }
+
+  private onDocumentSaved(document: vscode.TextDocument): void {
+    if (!this.autoCompileOnSave() || !this.isProjectDocument(document.uri)) {
+      return;
+    }
+    this.scheduleAutoCompile(this.autoCompileDelay());
+  }
+
+  private scheduleAutoCompile(delayMs: number): void {
+    if (this.autoCompileTimer) {
+      clearTimeout(this.autoCompileTimer);
+    }
+    this.autoCompileTimer = setTimeout(() => {
+      this.autoCompileTimer = undefined;
+      if (this.compilePromise) {
+        this.autoCompileQueued = true;
+        return;
+      }
+      void this.compile();
+    }, delayMs);
   }
 
   private async poll(): Promise<void> {
@@ -387,6 +430,28 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
       throw new Error('Open the local LaTeX project folder or configure “Ofsync: Project Root”.');
     }
     return workspaceFolder.uri.fsPath;
+  }
+
+  private autoCompileOnSave(): boolean {
+    return vscode.workspace.getConfiguration('ofsync').get<boolean>('autoCompileOnSave', false);
+  }
+
+  private autoCompileDelay(): number {
+    return Math.max(250, vscode.workspace.getConfiguration('ofsync').get<number>('autoCompileDelay', 1500));
+  }
+
+  private isProjectDocument(uri: vscode.Uri): boolean {
+    if (uri.scheme !== 'file') {
+      return false;
+    }
+    let root: string;
+    try {
+      root = this.projectRoot();
+    } catch {
+      return false;
+    }
+    const relativePath = path.relative(root, uri.fsPath);
+    return isChildPath(root, uri.fsPath) && !relativePath.split(path.sep).includes('.ofsync');
   }
 
   private buildId(): string {

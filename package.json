@@ -2,7 +2,7 @@
     "name": "ofsync-vscode",
     "displayName": "Ofsync",
     "description": "Visual Studio Code integration for the local ofsync daemon.",
-    "version": "0.1.7",
+    "version": "0.1.8",
     "private": true,
     "engines": {
         "vscode": "^1.85.0"
@@ -95,6 +95,17 @@
                     "default": 3000,
                     "minimum": 1000,
                     "description": "Milliseconds between local ofsync connection status checks."
+                },
+                "ofsync.autoCompileOnSave": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Compile the remote project after saving a file inside the Ofsync project."
+                },
+                "ofsync.autoCompileDelay": {
+                    "type": "number",
+                    "default": 1500,
+                    "minimum": 250,
+                    "description": "Milliseconds to wait after the last project-file save before automatically compiling."
                 }
             }
         },
