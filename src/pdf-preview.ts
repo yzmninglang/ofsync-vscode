@@ -36,16 +36,16 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
     button{border:0;padding:6px 8px;color:var(--vscode-button-foreground);background:var(--vscode-button-background);cursor:pointer}
     button:hover{background:var(--vscode-button-hoverBackground)}
     .hint{color:var(--vscode-descriptionForeground);font-size:12px}
-    #viewer{overflow:auto;padding:22px;background:var(--vscode-editor-background)}
+    #viewer{overflow:auto;padding:22px;background:var(--vscode-editor-background);position:relative;overscroll-behavior:contain}
+    .staging{position:absolute;left:0;top:0;width:100%;visibility:hidden;pointer-events:none}
     .page{position:relative;margin:0 auto 20px;width:max-content;box-shadow:0 1px 8px #0008;background:#fff;line-height:0;cursor:crosshair}
     canvas{display:block}
     .text-layer{position:absolute;inset:0;overflow:hidden;line-height:1;text-size-adjust:none;transform-origin:0 0}
     .text-item{position:absolute;display:block;white-space:pre;transform-origin:0 0;color:transparent;cursor:text;line-height:1}
     .text-item::selection{background:#4c9ffe66}
-    .text-item.sync-text-highlight{color:#111;background:#ffe45c;border-radius:2px;box-shadow:0 0 0 3px #ffe45c88,0 0 18px 6px #ffe45ccc;animation:sync-text-highlight 1s ease-in-out 3}
-    .sync-highlight{position:absolute;width:150px;height:32px;transform:translate(-50%,-50%);border:3px solid #ffcc00;border-radius:6px;background:#ffcc0038;box-shadow:0 0 0 4px #ffcc0040,0 0 22px 8px #ffcc00cc;pointer-events:none;z-index:4;animation:sync-highlight 1s ease-in-out 3}
+    .text-item.sync-text-highlight{color:transparent;background:transparent;outline:2px solid #ffcc00;outline-offset:2px;border-radius:2px}
+    .sync-highlight{position:absolute;border:3px solid #ffcc00;border-radius:3px;background:#ffcc0038;box-shadow:0 0 0 4px #ffcc0040,0 0 22px 12px #ffcc00cc;pointer-events:none;z-index:4;animation:sync-highlight 1s ease-in-out 3}
     @keyframes sync-highlight{0%,100%{opacity:.08;box-shadow:0 0 0 2px #ffcc0018,0 0 8px 2px #ffcc0055}50%{opacity:1;box-shadow:0 0 0 6px #ffcc0077,0 0 30px 12px #ffcc00ee}}
-    @keyframes sync-text-highlight{0%,100%{background:#ffe45c22;box-shadow:0 0 0 1px #ffe45c22}50%{background:#ffe45c;box-shadow:0 0 0 4px #ffe45c99,0 0 18px 6px #ffe45ccc}}
     #message{padding:20px;color:var(--vscode-descriptionForeground)}
   </style>
 </head>
@@ -56,16 +56,58 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
     const vscode = acquireVsCodeApi();
     const viewer = document.getElementById('viewer');
     const message = document.getElementById('message');
-    const target = { page: ${targetPage}, h: ${targetH ?? 'undefined'}, v: ${targetV ?? 'undefined'}, width: ${targetWidth ?? 'undefined'}, height: ${targetHeight ?? 'undefined'}, sourceText: ${JSON.stringify(location?.sourceText ?? '')} };
+    let target = { page: ${targetPage}, h: ${targetH ?? 'undefined'}, v: ${targetV ?? 'undefined'}, width: ${targetWidth ?? 'undefined'}, height: ${targetHeight ?? 'undefined'}, sourceText: ${JSON.stringify(location?.sourceText ?? '')} };
     const pdfJsUri = ${JSON.stringify(pdfJsUri.toString())};
     const pdfWorkerUri = ${JSON.stringify(pdfWorkerUri.toString())};
     let pdfjs;
+    let currentPdf;
+    let renderVersion = 0;
+    let viewState = { scale: 1.5, scrollLeft: 0, scrollTop: 0 };
+    let renderedPages = new Map();
+
+    function rememberViewState() {
+      viewState.scrollLeft = viewer.scrollLeft;
+      viewState.scrollTop = viewer.scrollTop;
+    }
+
+    function restoreViewState() {
+      viewer.scrollTo({ left: viewState.scrollLeft, top: viewState.scrollTop, behavior: 'auto' });
+    }
+
+    function zoomAt(clientX, clientY, factor) {
+      const oldScale = viewState.scale;
+      const nextScale = Math.min(4, Math.max(.5, oldScale * factor));
+      if (Math.abs(nextScale - oldScale) < .001) return;
+      const bounds = viewer.getBoundingClientRect();
+      const anchorX = clientX - bounds.left + viewer.scrollLeft;
+      const anchorY = clientY - bounds.top + viewer.scrollTop;
+      const ratio = nextScale / oldScale;
+      viewState.scale = nextScale;
+      viewState.scrollLeft = Math.max(0, anchorX * ratio - (clientX - bounds.left));
+      viewState.scrollTop = Math.max(0, anchorY * ratio - (clientY - bounds.top));
+      if (currentPdf) void renderPdf(currentPdf, true);
+    }
+
+    viewer.addEventListener('wheel', event => {
+      if (event.ctrlKey) {
+        event.preventDefault();
+        zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * .002));
+      } else if (event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+        event.preventDefault();
+        viewer.scrollLeft += event.deltaY;
+      }
+    }, { passive: false });
+    viewer.addEventListener('scroll', rememberViewState, { passive: true });
 
     document.getElementById('reload').addEventListener('click', () => {
-      message.textContent = 'Reloading compiled PDF…';
-      viewer.replaceChildren(message);
+      message.textContent = 'Loading the new compiled PDF…';
       vscode.postMessage({ type: 'reloadPdf' });
     });
+
+    function setTarget(nextTarget) {
+      target = { page: nextTarget.page || 1, h: nextTarget.h, v: nextTarget.v, width: nextTarget.width, height: nextTarget.height, sourceText: nextTarget.sourceText || '' };
+      focusSourceLocation();
+    }
 
     function scrollToSourceLocation(pageElement, viewport) {
       if (target.h === undefined || target.v === undefined) {
@@ -83,34 +125,14 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
       const point = syncPointToViewport(target.h, target.v, viewport);
       const highlight = document.createElement('div');
       highlight.className = 'sync-highlight';
-      const textItems = [...pageElement.querySelectorAll('.text-item')];
-      const textCandidates = textItems.map(item => {
-        const rect = item.getBoundingClientRect();
-        const pageRect = pageElement.getBoundingClientRect();
-        const left = rect.left - pageRect.left;
-        const top = rect.top - pageRect.top;
-        const centerX = left + rect.width / 2;
-        const centerY = top + rect.height / 2;
-        return { item, left, top, width: rect.width, height: rect.height, distance: Math.hypot(centerX - point[0], centerY - point[1]) };
-      });
-      const nearestText = textCandidates.sort((first, second) => first.distance - second.distance)[0];
-      const textTarget = nearestText && nearestText.distance <= Math.max(48, (target.height ?? 0) * viewport.scale * 3) ? nearestText : undefined;
-      if (textTarget) {
-        textTarget.item.classList.add('sync-text-highlight');
-        highlight.style.width = Math.max(12, textTarget.width + 6) + 'px';
-        highlight.style.height = Math.max(12, textTarget.height + 6) + 'px';
-        highlight.style.left = (textTarget.left + textTarget.width / 2) + 'px';
-        highlight.style.top = (textTarget.top + textTarget.height / 2) + 'px';
-      } else {
-        const width = Math.max(12, (target.width ?? 16) * viewport.scale);
-        const height = Math.max(12, (target.height ?? 12) * viewport.scale);
-        highlight.style.width = width + 'px';
-        highlight.style.height = height + 'px';
-        highlight.style.left = (point[0] + width / 2) + 'px';
-        highlight.style.top = (point[1] - height / 2) + 'px';
-      }
+      const width = Math.max(12, (target.width ?? 16) * viewport.scale);
+      const height = Math.max(12, (target.height ?? 12) * viewport.scale);
+      highlight.style.width = width + 'px';
+      highlight.style.height = height + 'px';
+      highlight.style.left = point[0] + 'px';
+      highlight.style.top = (point[1] - height) + 'px';
       pageElement.append(highlight);
-      window.setTimeout(() => { highlight.remove(); textTarget?.item.classList.remove('sync-text-highlight'); }, 3200);
+      window.setTimeout(() => highlight.remove(), 3200);
     }
 
     function addTextLayer(pageElement, viewport, textContent) {
@@ -137,16 +159,26 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
       return viewport.convertToViewportPoint(h, viewport.viewBox[3] - v);
     }
 
-    async function renderPdf(bytes) {
+    function focusSourceLocation() {
+      const sourceTarget = renderedPages.get(target.page);
+      if (!sourceTarget) return;
+      scrollToSourceLocation(sourceTarget.pageElement, sourceTarget.viewport);
+      highlightSourceLocation(sourceTarget.pageElement, sourceTarget.viewport);
+    }
+
+    async function renderPdf(bytes, preserveState = true, navigateToTarget = false) {
+      const version = ++renderVersion;
       try {
         pdfjs ??= await import(pdfJsUri);
         pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUri;
         const pdf = await pdfjs.getDocument({ data: bytes }).promise;
-        viewer.replaceChildren();
-        let sourceTarget;
+        const staging = document.createElement('div');
+        staging.className = 'staging';
+        const nextPages = new Map();
+        viewer.append(staging);
         for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
           const pdfPage = await pdf.getPage(pageNumber);
-          const viewport = pdfPage.getViewport({ scale: 1.5 });
+          const viewport = pdfPage.getViewport({ scale: viewState.scale });
           const canvas = document.createElement('canvas');
           const context = canvas.getContext('2d', { alpha: false });
           if (!context) throw new Error('Could not create PDF rendering context.');
@@ -180,25 +212,29 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
             const primary = unique[0];
             vscode.postMessage({ type: 'openSource', page: pageNumber, h: primary.h, v: primary.v, nearby: unique.slice(1, 12), identifier: textItem.textContent?.trim() || undefined });
           });
-          viewer.append(pageElement);
+          staging.append(pageElement);
           await pdfPage.render({ canvasContext: context, viewport }).promise;
           addTextLayer(pageElement, viewport, await pdfPage.getTextContent());
-          if (pageNumber === target.page) sourceTarget = { pageElement, viewport };
+          nextPages.set(pageNumber, { pageElement, viewport });
         }
-        if (sourceTarget) {
-          scrollToSourceLocation(sourceTarget.pageElement, sourceTarget.viewport);
-          highlightSourceLocation(sourceTarget.pageElement, sourceTarget.viewport);
-        }
+        if (version !== renderVersion) { staging.remove(); return; }
+        currentPdf = bytes;
+        renderedPages = nextPages;
+        message.remove();
+        staging.replaceWith(...staging.childNodes);
+        if (preserveState && target.page === 1 && target.h === undefined) restoreViewState();
+        if (navigateToTarget) focusSourceLocation();
       } catch (error) {
-        viewer.replaceChildren(message);
+        if (version !== renderVersion) return;
         message.textContent = 'Unable to render the compiled PDF: ' + (error instanceof Error ? error.message : String(error));
       }
     }
 
     window.addEventListener('message', event => {
       const data = event.data;
-      if (data.type === 'pdfData') void renderPdf(new Uint8Array(data.bytes));
-      if (data.type === 'pdfError') { viewer.replaceChildren(message); message.textContent = data.message; }
+      if (data.type === 'pdfData') void renderPdf(new Uint8Array(data.bytes), data.preserveView !== false, data.navigateToTarget === true);
+      if (data.type === 'navigate') setTarget(data.location);
+      if (data.type === 'pdfError') { message.textContent = data.message; }
     });
     vscode.postMessage({ type: 'previewReady' });
   </script>

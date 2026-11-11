@@ -93,6 +93,7 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
 
   public async compile(): Promise<void> {
     await this.runOperation('Compiling remote project…', async () => {
+      await this.client().sync();
       const result = await this.client().compile();
       this.updateBuildId(result);
       await this.poll();
@@ -172,7 +173,8 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
   }
 
   public openPdfPreview(refresh = false, location?: SyncCodeResult): void {
-    const panel = this.panel ?? vscode.window.createWebviewPanel(
+    const existingPanel = this.panel;
+    const panel = existingPanel ?? vscode.window.createWebviewPanel(
       'ofsync.pdfPreview',
       'Ofsync PDF Preview',
       vscode.ViewColumn.Beside,
@@ -180,18 +182,30 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     );
     this.panel = panel;
     panel.onDidDispose(() => { this.panel = undefined; }, undefined, this.context.subscriptions);
-    panel.webview.onDidReceiveMessage((message: { type?: string; page?: number; h?: number; v?: number; nearby?: Array<{ h: number; v: number }>; identifier?: string; message?: string }) => {
-      if (message.type === 'openSource' && message.page !== undefined && message.h !== undefined && message.v !== undefined) {
-        void this.openSourceFromCoordinates(message.page, message.h, message.v, message.identifier, message.nearby);
+    if (!existingPanel) {
+      panel.webview.onDidReceiveMessage((message: { type?: string; page?: number; h?: number; v?: number; nearby?: Array<{ h: number; v: number }>; identifier?: string; message?: string }) => {
+        if (message.type === 'openSource' && message.page !== undefined && message.h !== undefined && message.v !== undefined) {
+          void this.openSourceFromCoordinates(message.page, message.h, message.v, message.identifier, message.nearby);
+        }
+        if (message.type === 'previewReady') {
+          void this.loadPdf(panel, false, true);
+        }
+        if (message.type === 'reloadPdf') {
+          void this.loadPdf(panel, true, false);
+        }
+        if (message.type === 'syncMiss') {
+          void vscode.window.showInformationMessage(`Ofsync: ${message.message ?? 'No source mapping at this PDF location.'}`);
+        }
+      }, undefined, this.context.subscriptions);
+      panel.webview.html = this.pdfHtml(panel.webview, refresh, location);
+    } else {
+      if (location) {
+        void panel.webview.postMessage({ type: 'navigate', location });
       }
-      if (message.type === 'previewReady' || message.type === 'reloadPdf') {
-        void this.loadPdf(panel);
+      if (refresh) {
+        void this.loadPdf(panel, true, false);
       }
-      if (message.type === 'syncMiss') {
-        void vscode.window.showInformationMessage(`Ofsync: ${message.message ?? 'No source mapping at this PDF location.'}`);
-      }
-    }, undefined, this.context.subscriptions);
-    panel.webview.html = this.pdfHtml(panel.webview, refresh, location);
+    }
     panel.reveal(vscode.ViewColumn.Beside, true);
   }
 
@@ -303,10 +317,10 @@ class OfsyncController implements vscode.Disposable, vscode.WebviewViewProvider 
     throw new Error('No SyncTeX mapping found near the selected PDF text.');
   }
 
-  private async loadPdf(panel: vscode.WebviewPanel): Promise<void> {
+  private async loadPdf(panel: vscode.WebviewPanel, preserveView = true, navigateToTarget = false): Promise<void> {
     try {
       const bytes = await this.client().pdf();
-      await panel.webview.postMessage({ type: 'pdfData', bytes });
+      await panel.webview.postMessage({ type: 'pdfData', bytes, preserveView, navigateToTarget });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await panel.webview.postMessage({ type: 'pdfError', message: `Unable to load compiled PDF: ${message}` });

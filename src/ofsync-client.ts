@@ -55,12 +55,19 @@ export class OfsyncClient {
     return url.toString();
   }
 
-  public pdf(): Promise<Uint8Array> {
+  public pdf(cacheBust = true): Promise<Uint8Array> {
     const url = new URL('/api/pdf', this.serverUrl);
+    if (cacheBust) {
+      url.searchParams.set('t', String(Date.now()));
+    }
     const transport = url.protocol === 'https:' ? https.request : http.request;
 
     return new Promise<Uint8Array>((resolve, reject) => {
-      const request = transport(url, { method: 'GET', timeout: 20_000 }, (result) => {
+      const request = transport(url, {
+        method: 'GET',
+        headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+        timeout: 20_000,
+      }, (result) => {
         const chunks: Buffer[] = [];
         result.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
         result.on('error', reject);
