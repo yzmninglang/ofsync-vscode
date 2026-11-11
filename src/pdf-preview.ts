@@ -64,6 +64,7 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
     let renderVersion = 0;
     let viewState = { scale: 1.5, scrollLeft: 0, scrollTop: 0 };
     let renderedPages = new Map();
+    let zoomRenderTimer;
 
     function rememberViewState() {
       viewState.scrollLeft = viewer.scrollLeft;
@@ -85,7 +86,13 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
       viewState.scale = nextScale;
       viewState.scrollLeft = Math.max(0, anchorX * ratio - (clientX - bounds.left));
       viewState.scrollTop = Math.max(0, anchorY * ratio - (clientY - bounds.top));
-      if (currentPdf) void renderPdf(currentPdf, true);
+      if (currentPdf) {
+        if (zoomRenderTimer) window.clearTimeout(zoomRenderTimer);
+        zoomRenderTimer = window.setTimeout(() => {
+          zoomRenderTimer = undefined;
+          void renderPdf(currentPdf, true, false);
+        }, 100);
+      }
     }
 
     viewer.addEventListener('wheel', event => {
@@ -220,8 +227,8 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
         if (version !== renderVersion) { staging.remove(); return; }
         currentPdf = bytes;
         renderedPages = nextPages;
-        message.remove();
-        staging.replaceWith(...staging.childNodes);
+        const pages = [...staging.childNodes];
+        viewer.replaceChildren(...pages);
         if (preserveState && !navigateToTarget) restoreViewState();
         if (navigateToTarget) focusSourceLocation();
       } catch (error) {
