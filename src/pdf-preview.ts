@@ -222,7 +222,7 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
         renderedPages = nextPages;
         message.remove();
         staging.replaceWith(...staging.childNodes);
-        if (preserveState && target.page === 1 && target.h === undefined) restoreViewState();
+        if (preserveState && !navigateToTarget) restoreViewState();
         if (navigateToTarget) focusSourceLocation();
       } catch (error) {
         if (version !== renderVersion) return;
