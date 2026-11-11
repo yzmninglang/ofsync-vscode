@@ -38,6 +38,7 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
     .hint{color:var(--vscode-descriptionForeground);font-size:12px}
     #viewer{overflow:auto;padding:22px;background:var(--vscode-editor-background);position:relative;overscroll-behavior:contain}
     .staging{position:absolute;left:0;top:0;width:100%;visibility:hidden;pointer-events:none}
+    .pdf-document{width:max-content;min-width:100%;transform-origin:0 0}
     .page{position:relative;margin:0 auto 20px;width:max-content;box-shadow:0 1px 8px #0008;background:#fff;line-height:0;cursor:crosshair}
     canvas{display:block}
     .text-layer{position:absolute;inset:0;overflow:hidden;line-height:1;text-size-adjust:none;transform-origin:0 0}
@@ -65,6 +66,8 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
     let viewState = { scale: 1.5, scrollLeft: 0, scrollTop: 0 };
     let renderedPages = new Map();
     let zoomRenderTimer;
+    let renderedScale = viewState.scale;
+    let documentElement;
 
     function rememberViewState() {
       viewState.scrollLeft = viewer.scrollLeft;
@@ -86,19 +89,24 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
       viewState.scale = nextScale;
       viewState.scrollLeft = Math.max(0, anchorX * ratio - (clientX - bounds.left));
       viewState.scrollTop = Math.max(0, anchorY * ratio - (clientY - bounds.top));
+      if (documentElement) {
+        documentElement.style.zoom = String(nextScale / renderedScale);
+      }
+      restoreViewState();
       if (currentPdf) {
         if (zoomRenderTimer) window.clearTimeout(zoomRenderTimer);
         zoomRenderTimer = window.setTimeout(() => {
           zoomRenderTimer = undefined;
           void renderPdf(currentPdf, true, false);
-        }, 100);
+        }, 180);
       }
     }
 
     viewer.addEventListener('wheel', event => {
       if (event.ctrlKey) {
         event.preventDefault();
-        zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * .002));
+        const wheelDelta = event.deltaY * (event.deltaMode === 1 ? 16 : 1);
+        zoomAt(event.clientX, event.clientY, Math.exp(-wheelDelta * .0028));
       } else if (event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
         event.preventDefault();
         viewer.scrollLeft += event.deltaY;
@@ -175,6 +183,7 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
 
     async function renderPdf(bytes, preserveState = true, navigateToTarget = false) {
       const version = ++renderVersion;
+      const scaleForRender = viewState.scale;
       try {
         const renderBytes = new Uint8Array(bytes);
         const retainedBytes = new Uint8Array(bytes);
@@ -182,12 +191,12 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
         pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUri;
         const pdf = await pdfjs.getDocument({ data: renderBytes }).promise;
         const staging = document.createElement('div');
-        staging.className = 'staging';
+        staging.className = 'pdf-document staging';
         const nextPages = new Map();
         viewer.append(staging);
         for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
           const pdfPage = await pdf.getPage(pageNumber);
-          const viewport = pdfPage.getViewport({ scale: viewState.scale });
+          const viewport = pdfPage.getViewport({ scale: scaleForRender });
           const canvas = document.createElement('canvas');
           const context = canvas.getContext('2d', { alpha: false });
           if (!context) throw new Error('Could not create PDF rendering context.');
@@ -228,9 +237,12 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
         }
         if (version !== renderVersion) { staging.remove(); return; }
         currentPdf = retainedBytes;
+        renderedScale = scaleForRender;
         renderedPages = nextPages;
-        const pages = [...staging.childNodes];
-        viewer.replaceChildren(...pages);
+        staging.classList.remove('staging');
+        staging.style.zoom = '1';
+        viewer.replaceChildren(staging);
+        documentElement = staging;
         if (preserveState && !navigateToTarget) restoreViewState();
         if (navigateToTarget) focusSourceLocation();
       } catch (error) {
@@ -241,7 +253,11 @@ export function createPdfPreviewHtml(webview: vscode.Webview, extensionUri: vsco
 
     window.addEventListener('message', event => {
       const data = event.data;
-      if (data.type === 'pdfData') void renderPdf(new Uint8Array(data.bytes), data.preserveView !== false, data.navigateToTarget === true);
+      if (data.type === 'pdfData') {
+        if (zoomRenderTimer) window.clearTimeout(zoomRenderTimer);
+        zoomRenderTimer = undefined;
+        void renderPdf(new Uint8Array(data.bytes), data.preserveView !== false, data.navigateToTarget === true);
+      }
       if (data.type === 'navigate') setTarget(data.location);
       if (data.type === 'pdfError') { message.textContent = data.message; }
     });
